@@ -1,7 +1,4 @@
-"""SQLite persistence and query layer for the user's catch collection.
-
-This module knows about SQLite, but not about LangChain or the chatbot.
-"""
+"""SQLite storage for the user's catches."""
 
 from __future__ import annotations
 
@@ -163,25 +160,30 @@ def _build_filter_clause(
     return " WHERE " + " AND ".join(clauses), parameters
 
 
+SORT_ORDERS = {
+    "date_desc": "catch_date DESC, id DESC",
+    "date_asc": "catch_date ASC, id ASC",
+    "length_desc": "length DESC, id DESC",
+    "weight_desc": "weight DESC, id DESC",
+    "name_asc": "name ASC, id ASC",
+}
+
+
 def get_catches(
+    *,
     species: str | None = None,
+    location: str | None = None,
     bundesland: str | None = None,
     date_from: date | str | None = None,
     date_to: date | str | None = None,
     min_length: float | None = None,
-    min_weight: float | None = None,
-    sort_by: str = "date_desc",
-    *,
-    location: str | None = None,
     max_length: float | None = None,
+    min_weight: float | None = None,
     max_weight: float | None = None,
+    sort_by: str = "date_desc",
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Return catches matching the supplied optional filters.
-
-    The original arguments are kept compatible with the existing inventory UI.
-    Additional keyword-only filters are used by the chatbot tool.
-    """
+    """Return all catches that match the given filters."""
     where_clause, parameters = _build_filter_clause(
         species=species,
         location=location,
@@ -194,20 +196,12 @@ def get_catches(
         max_weight=max_weight,
     )
 
-    sort_options = {
-        "date_desc": "catch_date DESC, id DESC",
-        "date_asc": "catch_date ASC, id ASC",
-        "length_desc": "length DESC, id DESC",
-        "weight_desc": "weight DESC, id DESC",
-        "name_asc": "name ASC, id ASC",
-    }
-
     query = "SELECT * FROM catches" + where_clause
-    query += f" ORDER BY {sort_options.get(sort_by, sort_options['date_desc'])}"
+    query += f" ORDER BY {SORT_ORDERS.get(sort_by, SORT_ORDERS['date_desc'])}"
 
     if limit is not None:
         query += " LIMIT ?"
-        parameters.append(max(1, int(limit)))
+        parameters.append(limit)
 
     with get_connection() as connection:
         rows = connection.execute(query, parameters).fetchall()
@@ -227,7 +221,7 @@ def get_catch_summary(
     min_weight: float | None = None,
     max_weight: float | None = None,
 ) -> dict[str, Any]:
-    """Return aggregated catch statistics without loading every row."""
+    """Return count, averages and maximums of the matching catches."""
     where_clause, parameters = _build_filter_clause(
         species=species,
         location=location,
@@ -256,7 +250,8 @@ def get_catch_summary(
     with get_connection() as connection:
         row = connection.execute(query, parameters).fetchone()
 
-    return dict(row) if row else {"count": 0}
+    # An aggregate query always returns exactly one row.
+    return dict(row)
 
 
 def delete_catch(catch_id: int) -> None:

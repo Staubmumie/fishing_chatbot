@@ -1,13 +1,10 @@
-"""
-Catch Collection page: add, filter, show and delete catches.
-The data itself is stored in SQLite (see catch_repository.py).
-"""
+"""Catch Collection page: add, filter, show and delete catches."""
 
 from datetime import date
 
 import streamlit as st
 
-from src import catch_repository
+from . import catch_repository
 
 
 # ---------------------------------------------------------
@@ -175,16 +172,12 @@ def render_filter_form():
 
             with col2:
 
+                bundesland_options = ["All"] + catch_repository.BUNDESLAENDER
+
                 bundesland = st.selectbox(
                     "Bundesland",
-                    ["All"] + catch_repository.BUNDESLAENDER,
-                    index=(
-                        0
-                        if active["bundesland"] is None
-                        else catch_repository.BUNDESLAENDER.index(
-                            active["bundesland"]
-                        ) + 1
-                    ),
+                    bundesland_options,
+                    index=bundesland_options.index(active["bundesland"] or "All"),
                 )
 
             with col3:

@@ -1,11 +1,9 @@
-"""
-Chatbot page including the developer panel in the sidebar.
-UI only: model/RAG/tool orchestration lives in chatbot.py.
-"""
+"""Chatbot page with the developer panel in the sidebar."""
 
 import streamlit as st
 
 from .chatbot import generate_response
+from .tools import TOOL_LABELS
 
 
 # ---------------------------------------------------------
@@ -75,18 +73,11 @@ def render_sources(sources):
 
     with st.expander("Sources"):
         for source in sources:
-            label = str(source.get("source", "Unknown source"))
+            label = str(source.get("document", "Unknown document"))
             page = source.get("page")
             if page is not None:
                 label += f" — page {page}"
             st.markdown(f"- {label}")
-
-TOOL_DISPLAY_NAMES = {
-    "search_personal_catches": "Personal Catches",
-    "search_fishing_knowledge": "Web Search",
-    "openmeteo_search_locations": "Weather Location Search",
-    "openmeteo_get_forecast": "Weather Forecast",
-}
 
 
 def _is_record_list(value):
@@ -144,15 +135,11 @@ def render_context_used(chunks, tool_calls):
     if chunks:
         with st.expander(f"📚 Regulation Retrieval · {len(chunks)} chunks"):
             for chunk in chunks:
-                details = [
-                    str(detail)
-                    for detail in (
-                        chunk.get("source", "Unknown source"),
-                        chunk.get("state"),
-                        f"page {chunk['page']}" if chunk.get("page") is not None else None,
-                    )
-                    if detail
-                ]
+                details = [str(chunk.get("document", "Unknown document"))]
+                if chunk.get("bundesland"):
+                    details.append(chunk["bundesland"])
+                if chunk.get("page") is not None:
+                    details.append(f"page {chunk['page']}")
 
                 st.markdown(f"**Chunk {chunk['index']}** · {' · '.join(details)}")
                 st.text(chunk.get("content", ""))
@@ -163,7 +150,7 @@ def render_context_used(chunks, tool_calls):
         result = tool_call.get("result")
         count = _count_results(result)
 
-        label = f"🔧 {TOOL_DISPLAY_NAMES.get(name, name)}"
+        label = f"🔧 {TOOL_LABELS.get(name, name)}"
         if count is not None:
             label += f" · {count} result{'' if count == 1 else 's'}"
 

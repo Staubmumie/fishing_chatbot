@@ -1,6 +1,6 @@
 import streamlit as st
 
-from src import catch_collection, chatbot_ui
+from src import catch_collection_ui, chatbot_ui
 
 
 # ---------------------------------------------------------
@@ -32,4 +32,4 @@ if page == "🎣 Chatbot":
     chatbot_ui.render_page()
 
 elif page == "🐟 Catch Collection":
-    catch_collection.render_page()
+    catch_collection_ui.render_page()

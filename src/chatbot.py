@@ -1,24 +1,23 @@
-"""LangChain orchestration for the fishing chatbot.
+"""Generate chatbot answers from retrieval, the chat model and tools.
 
-No Streamlit UI belongs here. This module coordinates retrieval, the chat
-model and optional LangChain tools.
+No Streamlit code here, the UI lives in chatbot_ui.py.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import date
 from functools import lru_cache
 from typing import Any, Callable
-import asyncio
 
 from langchain.agents import create_agent
 from langchain_core.documents import Document
 from langchain_openai import ChatOpenAI
 
-from .indexing import retrieve_documents
-from .tools import get_chat_tools
+from .retrieval import retrieve_documents
+from .tools import TOOL_LABELS, get_chat_tools
 
 
 SYSTEM_PROMPT = """
@@ -60,13 +59,13 @@ def _format_context(documents: list[Document]) -> str:
     chunks: list[str] = []
 
     for index, document in enumerate(documents, start=1):
-        state = document.metadata.get("state")
+        bundesland = document.metadata.get("bundesland")
         document_name = document.metadata.get("document", "unknown document")
         page = document.metadata.get("page")
 
         label_parts = [str(document_name)]
-        if state:
-            label_parts.append(str(state))
+        if bundesland:
+            label_parts.append(str(bundesland))
         if page is not None:
             label_parts.append(f"page {page}")
 
@@ -93,13 +92,14 @@ def _extract_sources(documents: list[Document]) -> list[dict[str, Any]]:
         seen.add(key)
         sources.append(
             {
-                "source": document_name,
+                "document": document_name,
                 "page": page,
-                "state": document.metadata.get("state"),
+                "bundesland": document.metadata.get("bundesland"),
             }
         )
 
     return sources
+
 
 def _extract_chunks(documents: list[Document]) -> list[dict[str, Any]]:
     chunks: list[dict[str, Any]] = []
@@ -109,13 +109,14 @@ def _extract_chunks(documents: list[Document]) -> list[dict[str, Any]]:
             {
                 "index": index,
                 "content": document.page_content,
-                "source": document.metadata.get("document", "Unknown document"),
+                "document": document.metadata.get("document", "Unknown document"),
                 "page": document.metadata.get("page"),
-                "state": document.metadata.get("state"),
+                "bundesland": document.metadata.get("bundesland"),
             }
         )
 
     return chunks
+
 
 def _parse_tool_content(content: Any) -> Any:
     """Turn ToolMessage content back into Python data where possible.
@@ -160,8 +161,12 @@ def _extract_tool_calls(new_messages: list[Any]) -> list[dict[str, Any]]:
 
 def _to_langchain_history(
     history: list[dict[str, Any]],
-    max_messages: int | None = 10,
+    max_messages: int,
 ) -> list[dict[str, str]]:
+    # messages[-0:] would return everything, so 0 needs its own case.
+    if max_messages == 0:
+        return []
+
     messages: list[dict[str, str]] = []
 
     for message in history:
@@ -171,10 +176,7 @@ def _to_langchain_history(
         if role in {"user", "assistant"} and content:
             messages.append({"role": role, "content": content})
 
-    if max_messages is not None:
-        messages = messages[-max_messages:] if max_messages > 0 else []
-
-    return messages
+    return messages[-max_messages:]
 
 
 def _message_to_text(message: Any) -> str:
@@ -201,7 +203,7 @@ def generate_response(
     *,
     model_name: str,
     temperature: float,
-    max_history_messages: int | None = 10,
+    max_history_messages: int = 10,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Retrieve legal context, run the LangChain agent and return the answer.
@@ -222,21 +224,13 @@ def generate_response(
     )
 
 
-TOOL_STATUS_LABELS = {
-    "search_personal_catches": "Searching your personal catches",
-    "search_fishing_knowledge": "Searching the web for fishing knowledge",
-    "openmeteo_search_locations": "Looking up the location",
-    "openmeteo_get_forecast": "Fetching the weather forecast",
-}
-
-
 async def _generate_response_async(
     prompt: str,
     history: list[dict[str, Any]],
     *,
     model_name: str,
     temperature: float,
-    max_history_messages: int | None = 10,
+    max_history_messages: int = 10,
     on_status: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
 
@@ -285,7 +279,7 @@ async def _generate_response_async(
 
         for tool_call in getattr(last_message, "tool_calls", None) or []:
             name = tool_call["name"]
-            report(TOOL_STATUS_LABELS.get(name, f"Calling tool {name}"))
+            report(f"Calling tool: {TOOL_LABELS.get(name, name)}")
 
         if getattr(last_message, "type", None) == "tool":
             report("Generating answer")

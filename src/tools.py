@@ -4,10 +4,23 @@ from __future__ import annotations
 
 from typing import Literal
 
-from langchain_core.tools import tool
+from ddgs import DDGS
 from langchain.mcp import MCPAdapter
+from langchain_core.tools import tool
 
-from .catch_repository import get_catches, get_catch_summary
+from .catch_repository import get_catch_summary, get_catches
+
+
+# Readable tool names for the UI (status box and "Context used" view).
+TOOL_LABELS = {
+    "search_personal_catches": "Personal Catches",
+    "search_fishing_knowledge": "Web Search",
+    "openmeteo_search_locations": "Weather Location Search",
+    "openmeteo_get_forecast": "Weather Forecast",
+}
+
+# Keeps individual catch lists short in the model context.
+MAX_LISTED_CATCHES = 20
 
 
 # ---------------------------------------------------------------------------
@@ -21,8 +34,8 @@ def search_personal_catches(
     bundesland: str | None = None,
     min_length_cm: float | None = None,
     max_length_cm: float | None = None,
-    min_weight_g: float | None = None,
-    max_weight_g: float | None = None,
+    min_weight_kg: float | None = None,
+    max_weight_kg: float | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     result_type: Literal["summary", "list", "record"] = "summary",
@@ -45,8 +58,8 @@ def search_personal_catches(
         bundesland: German federal state such as Brandenburg or Berlin.
         min_length_cm: Minimum fish length in centimeters.
         max_length_cm: Maximum fish length in centimeters.
-        min_weight_g: Minimum fish weight in grams.
-        max_weight_g: Maximum fish weight in grams.
+        min_weight_kg: Minimum fish weight in kilograms.
+        max_weight_kg: Maximum fish weight in kilograms.
         start_date: Earliest catch date in YYYY-MM-DD format.
         end_date: Latest catch date in YYYY-MM-DD format.
         result_type: Use summary for counts/averages, list for individual
@@ -56,7 +69,7 @@ def search_personal_catches(
         limit: Maximum number of individual catches. Values are capped at 20.
     """
 
-    common_filters = {
+    filters = {
         "species": species,
         "location": location,
         "bundesland": bundesland,
@@ -64,46 +77,37 @@ def search_personal_catches(
         "date_to": end_date,
         "min_length": min_length_cm,
         "max_length": max_length_cm,
-        "min_weight": min_weight_g,
-        "max_weight": max_weight_g,
+        "min_weight": min_weight_kg,
+        "max_weight": max_weight_kg,
     }
 
     if result_type == "summary":
         return {
             "result_type": "summary",
-            "summary": get_catch_summary(**common_filters),
+            "summary": get_catch_summary(**filters),
         }
 
-    safe_limit = 1 if result_type == "record" else max(
-        1,
-        min(int(limit), 20),
-    )
+    if result_type == "record":
+        limit = 1
+    else:
+        limit = max(1, min(int(limit), MAX_LISTED_CATCHES))
 
-    catches = get_catches(
-        **common_filters,
-        sort_by=sort_by,
-        limit=safe_limit,
-    )
+    catches = get_catches(**filters, sort_by=sort_by, limit=limit)
 
     # Never send image BLOBs into the LLM context.
-    compact_catches = [
-        {
-            key: value
-            for key, value in catch.items()
-            if key != "image"
-        }
-        for catch in catches
-    ]
+    for catch in catches:
+        del catch["image"]
 
     return {
         "result_type": result_type,
-        "count_returned": len(compact_catches),
-        "catches": compact_catches,
+        "count_returned": len(catches),
+        "catches": catches,
     }
 
-from langchain_core.tools import tool
-from ddgs import DDGS
 
+# ---------------------------------------------------------------------------
+# Web search tool
+# ---------------------------------------------------------------------------
 
 @tool
 def search_fishing_knowledge(query: str) -> dict:
@@ -127,35 +131,25 @@ def search_fishing_knowledge(query: str) -> dict:
         query: A complete search query describing the information needed.
     """
 
-    results = DDGS().text(
-        query,
-        max_results=5,
-    )
-
-    compact_results = [
-        {
-            "title": result.get("title"),
-            "url": result.get("href"),
-            "content": result.get("body"),
-        }
-        for result in results
-    ]
-    for result in compact_results:
-        print(result)
+    results = DDGS().text(query, max_results=5)
 
     return {
         "query": query,
-        "results": compact_results,
+        "results": [
+            {
+                "title": result.get("title"),
+                "url": result.get("href"),
+                "content": result.get("body"),
+            }
+            for result in results
+        ],
     }
 
-# ---------------------------------------------------------------------------
-# Local tools
-# ---------------------------------------------------------------------------
-CHAT_TOOLS = [
+
+LOCAL_TOOLS = [
     search_personal_catches,
     search_fishing_knowledge,
 ]
-
 
 
 # ---------------------------------------------------------------------------
@@ -171,18 +165,16 @@ WEATHER_TOOL_NAMES = {
 
 
 async def get_weather_tools():
-    """Load the required weather tools from the Open-Meteo MCP server."""
+    """Load the weather tools we need from the Open-Meteo MCP server."""
 
     async with MCPAdapter(WEATHER_MCP_URL) as adapter:
         all_tools = await adapter.list_tools()
 
-    weather_tools = [
+    return [
         mcp_tool
         for mcp_tool in all_tools
         if mcp_tool.name in WEATHER_TOOL_NAMES
     ]
-
-    return weather_tools
 
 
 async def get_chat_tools():
@@ -194,7 +186,4 @@ async def get_chat_tools():
         print(f"Weather MCP server unavailable: {exc}")
         weather_tools = []
 
-    return [
-        *CHAT_TOOLS,
-        *weather_tools,
-    ]
+    return [*LOCAL_TOOLS, *weather_tools]
