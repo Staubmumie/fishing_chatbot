@@ -2,8 +2,11 @@
 
 import streamlit as st
 
-from .chatbot import generate_response
-from .tools import TOOL_LABELS
+from ..chatbot import generate_response
+from ..tools import TOOL_LABELS
+
+
+ASSISTANT_AVATAR = ":material/phishing:"
 
 
 # ---------------------------------------------------------
@@ -14,7 +17,8 @@ def render_sidebar():
 
     with st.sidebar:
 
-        st.title("Developer Panel")
+        st.markdown("**:material/tune: Developer Panel**")
+        st.caption("Settings for testing the chatbot.")
 
         st.subheader("Model")
 
@@ -36,8 +40,6 @@ def render_sidebar():
             key="temperature",
         )
 
-        st.divider()
-
         st.subheader("Conversation")
 
         st.slider(
@@ -47,17 +49,13 @@ def render_sidebar():
             value=10,
             step=1,
             key="max_history_messages",
+            help="Number of previous messages sent to the model. 0 disables history.",
         )
-
-        st.caption(
-            "Number of previous messages sent to the model. 0 disables history."
-        )
-
-        st.divider()
 
         if st.button(
             "Clear Chat",
-            use_container_width=True,
+            icon=":material/delete_sweep:",
+            width="stretch",
         ):
             st.session_state.messages = []
             st.rerun()
@@ -71,7 +69,7 @@ def render_sources(sources):
     if not sources:
         return
 
-    with st.expander("Sources"):
+    with st.expander("Sources", icon=":material/description:"):
         for source in sources:
             label = str(source.get("document", "Unknown document"))
             page = source.get("page")
@@ -107,7 +105,7 @@ def _render_tool_value(value):
                 if item.get("content"):
                     st.caption(item["content"])
         else:
-            st.dataframe(value, use_container_width=True, hide_index=True)
+            st.dataframe(value, width="stretch", hide_index=True)
 
     elif isinstance(value, dict):
         for key, item in value.items():
@@ -133,7 +131,10 @@ def render_context_used(chunks, tool_calls):
     st.caption("Context used")
 
     if chunks:
-        with st.expander(f"📚 Regulation Retrieval · {len(chunks)} chunks"):
+        with st.expander(
+            f"Regulation Retrieval · {len(chunks)} chunks",
+            icon=":material/menu_book:",
+        ):
             for chunk in chunks:
                 details = [str(chunk.get("document", "Unknown document"))]
                 if chunk.get("bundesland"):
@@ -150,11 +151,11 @@ def render_context_used(chunks, tool_calls):
         result = tool_call.get("result")
         count = _count_results(result)
 
-        label = f"🔧 {TOOL_LABELS.get(name, name)}"
+        label = TOOL_LABELS.get(name, name)
         if count is not None:
             label += f" · {count} result{'' if count == 1 else 's'}"
 
-        with st.expander(label):
+        with st.expander(label, icon=":material/build:"):
             args = {k: v for k, v in tool_call.get("args", {}).items() if v is not None}
             if args:
                 st.caption(
@@ -162,6 +163,17 @@ def render_context_used(chunks, tool_calls):
                 )
 
             _render_tool_value(result)
+
+
+def render_answer_context(message_index, sources, chunks, tool_calls):
+    """Sources and developer context below an answer, styled as secondary."""
+    if not (sources or chunks or tool_calls):
+        return
+
+    with st.container(key=f"answer_context_{message_index}"):
+        render_sources(sources)
+        render_context_used(chunks, tool_calls)
+
 
 # ---------------------------------------------------------
 # Page
@@ -174,7 +186,7 @@ def render_page():
 
     render_sidebar()
 
-    st.title("🎣 Fishing Regulation Assistant")
+    st.title("Fishing Regulation Assistant")
 
     st.caption(
         "Ask questions about fishing regulations in Germany."
@@ -182,13 +194,11 @@ def render_page():
 
     if not st.session_state.messages:
 
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
             st.markdown(
                 """
                 Hi! I can help you understand fishing regulations
-                in **Germany**.
-
-                For example:
+                in **Germany**. For example:
 
                 - Can I fish for zander today?
                 - What is the minimum size for pike?
@@ -198,9 +208,11 @@ def render_page():
             )
 
     # Existing Messages
-    for message in st.session_state.messages:
+    for index, message in enumerate(st.session_state.messages):
 
-        with st.chat_message(message["role"]):
+        avatar = ASSISTANT_AVATAR if message["role"] == "assistant" else None
+
+        with st.chat_message(message["role"], avatar=avatar):
 
             if message.get("content"):
                 st.markdown(message["content"])
@@ -209,11 +221,13 @@ def render_page():
                 st.image(
                     image["data"],
                     caption=image["name"],
+                    width=320,
                 )
 
             if message["role"] == "assistant":
-                render_sources(message.get("sources", []))
-                render_context_used(
+                render_answer_context(
+                    index,
+                    message.get("sources", []),
                     message.get("chunks", []),
                     message.get("tool_calls", []),
                 )
@@ -262,46 +276,58 @@ def render_page():
             st.image(
                 image["data"],
                 caption=image["name"],
+                width=320,
             )
 
-    # Text/RAG first version: images are displayed by the UI but are not sent
-    # to the model yet.
-    if not text:
-        assistant_response = (
-            "Image input is not connected to the model yet. "
-            "Please add a text question for this first version."
-        )
-        sources = []
-        chunks = []
-        tool_calls = []
-    else:
-        try:
-            with st.status("Thinking...") as status:
+    with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
 
-                def show_step(step):
-                    status.update(label=f"{step}...")
-                    status.write(step)
-
-                result = generate_response(
-                    prompt=text,
-                    history=previous_history,
-                    model_name=st.session_state.model,
-                    temperature=st.session_state.temperature,
-                    max_history_messages=st.session_state.max_history_messages,
-                    on_status=show_step,
-                )
-                status.update(label="Done", state="complete")
-
-            assistant_response = result["answer"]
-            sources = result["sources"]
-            chunks = result["chunks"]
-            tool_calls = result["tool_calls"]
-
-        except Exception as exc:
-            assistant_response = f"Error while generating the answer: `{exc}`"
+        # Text/RAG first version: images are displayed by the UI but are not
+        # sent to the model yet.
+        if not text:
+            assistant_response = (
+                "Image input is not connected to the model yet. "
+                "Please add a text question for this first version."
+            )
             sources = []
             chunks = []
             tool_calls = []
+        else:
+            try:
+                with st.status("Thinking...") as status:
+
+                    def show_step(step):
+                        status.update(label=f"{step}...")
+                        status.write(step)
+
+                    result = generate_response(
+                        prompt=text,
+                        history=previous_history,
+                        model_name=st.session_state.model,
+                        temperature=st.session_state.temperature,
+                        max_history_messages=st.session_state.max_history_messages,
+                        on_status=show_step,
+                    )
+                    status.update(label="Done", state="complete")
+
+                assistant_response = result["answer"]
+                sources = result["sources"]
+                chunks = result["chunks"]
+                tool_calls = result["tool_calls"]
+
+            except Exception as exc:
+                assistant_response = f"Error while generating the answer: `{exc}`"
+                sources = []
+                chunks = []
+                tool_calls = []
+
+        st.markdown(assistant_response)
+
+        render_answer_context(
+            len(st.session_state.messages),
+            sources,
+            chunks,
+            tool_calls,
+        )
 
     assistant_message = {
         "role": "assistant",
@@ -312,9 +338,3 @@ def render_page():
         "tool_calls": tool_calls,
     }
     st.session_state.messages.append(assistant_message)
-
-    with st.chat_message("assistant"):
-        st.markdown(assistant_response)
-
-        render_sources(sources)
-        render_context_used(chunks, tool_calls)

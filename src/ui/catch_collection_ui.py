@@ -4,7 +4,7 @@ from datetime import date
 
 import streamlit as st
 
-from . import catch_repository
+from .. import catch_repository
 
 
 # ---------------------------------------------------------
@@ -17,14 +17,16 @@ def render_add_catch_form():
 
         st.subheader("Add a new catch")
 
-        with st.form("add_catch_form"):
+        with st.form("add_catch_form", border=False):
 
-            fish_name = st.text_input(
-                "Name / Species",
-                placeholder="e.g. Pike",
-            )
+            name_col, location_col, bundesland_col = st.columns(3)
 
-            location_col, state_col = st.columns(2)
+            with name_col:
+
+                fish_name = st.text_input(
+                    "Name / Species",
+                    placeholder="e.g. Pike",
+                )
 
             with location_col:
 
@@ -33,23 +35,23 @@ def render_add_catch_form():
                     placeholder="e.g. Lake Schwielowsee",
                 )
 
-            with state_col:
+            with bundesland_col:
 
                 bundesland = st.selectbox(
                     "Bundesland",
                     [""] + catch_repository.BUNDESLAENDER,
                 )
 
-            col1, col2, col3 = st.columns(3)
+            date_col, weight_col, length_col = st.columns(3)
 
-            with col1:
+            with date_col:
 
                 catch_date = st.date_input(
                     "Date",
                     value=date.today(),
                 )
 
-            with col2:
+            with weight_col:
 
                 weight = st.number_input(
                     "Weight (kg)",
@@ -57,7 +59,7 @@ def render_add_catch_form():
                     step=0.1,
                 )
 
-            with col3:
+            with length_col:
 
                 length = st.number_input(
                     "Length (cm)",
@@ -65,31 +67,37 @@ def render_add_catch_form():
                     step=1.0,
                 )
 
-            image = st.file_uploader(
-                "Fish image",
-                type=["png", "jpg", "jpeg", "webp"],
-            )
+            image_col, notes_col = st.columns(2)
 
-            notes = st.text_area(
-                "Notes",
-                placeholder="Optional notes about the catch...",
-            )
+            with image_col:
 
-            save_col, cancel_col = st.columns(2)
+                image = st.file_uploader(
+                    "Fish image",
+                    type=["png", "jpg", "jpeg", "webp"],
+                )
+
+            with notes_col:
+
+                notes = st.text_area(
+                    "Notes",
+                    placeholder="Optional notes about the catch...",
+                )
+
+            _, cancel_col, save_col = st.columns([3, 1, 1])
+
+            with cancel_col:
+
+                cancel = st.form_submit_button(
+                    "Cancel",
+                    width="stretch",
+                )
 
             with save_col:
 
                 save_catch = st.form_submit_button(
                     "Save Catch",
                     type="primary",
-                    use_container_width=True,
-                )
-
-            with cancel_col:
-
-                cancel = st.form_submit_button(
-                    "Cancel",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
         # Cancel
@@ -158,7 +166,7 @@ def render_filter_form():
 
         st.subheader("Filter catches")
 
-        with st.form("filter_form"):
+        with st.form("filter_form", border=False):
 
             col1, col2, col3 = st.columns(3)
 
@@ -223,21 +231,21 @@ def render_filter_form():
                     value=active["min_weight"],
                 )
 
-            apply_col, reset_col = st.columns(2)
+            _, reset_col, apply_col = st.columns([3, 1, 1])
+
+            with reset_col:
+
+                reset_filters = st.form_submit_button(
+                    "Reset",
+                    width="stretch",
+                )
 
             with apply_col:
 
                 apply_filters = st.form_submit_button(
                     "Apply Filter",
                     type="primary",
-                    use_container_width=True,
-                )
-
-            with reset_col:
-
-                reset_filters = st.form_submit_button(
-                    "Reset",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
         # Reset
@@ -269,12 +277,16 @@ def render_filter_form():
 
 def render_catch_card(catch):
 
-    with st.container(border=True):
+    # The key gives the card a CSS class, see catch cards in styles.py.
+    with st.container(border=True, key=f"catch_card_{catch['id']}"):
 
         if catch["image"]:
             st.image(catch["image"])
 
-        st.subheader(catch["name"])
+        st.markdown(f"#### {catch['name']}")
+
+        catch_date = date.fromisoformat(catch["catch_date"]).strftime("%d.%m.%Y")
+        details = [f":material/calendar_today: {catch_date}"]
 
         if catch["location"] or catch["bundesland"]:
 
@@ -284,25 +296,29 @@ def render_catch_card(catch):
                 if part
             )
 
-            st.write(f"📍 {place}")
+            details.append(f":material/location_on: {place}")
 
-        st.write(
-            f"📅 {date.fromisoformat(catch['catch_date']).strftime('%d.%m.%Y')}"
-        )
+        st.caption("  \n".join(details))
+
+        measurements = []
 
         if catch["length"] > 0:
-            st.write(f"📏 {catch['length']:.0f} cm")
+            measurements.append(f":green-badge[:material/straighten: {catch['length']:.0f} cm]")
 
         if catch["weight"] > 0:
-            st.write(f"⚖️ {catch['weight']:.2f} kg")
+            measurements.append(f":green-badge[:material/scale: {catch['weight']:.2f} kg]")
+
+        if measurements:
+            st.markdown(" ".join(measurements))
 
         if catch["notes"]:
             st.caption(catch["notes"])
 
         if st.button(
-            "🗑️ Delete",
+            "Delete",
+            icon=":material/delete:",
+            type="tertiary",
             key=f"delete_{catch['id']}",
-            use_container_width=True,
         ):
             catch_repository.delete_catch(catch["id"])
             st.rerun()
@@ -330,18 +346,19 @@ def render_page():
     # Header
     title_col, filter_col, add_col = st.columns(
         [4, 1, 1],
-        vertical_alignment="center",
+        vertical_alignment="bottom",
     )
 
     with title_col:
-        st.title("🐟 Catch Collection")
+        st.title("Catch Collection")
         st.caption("Keep track of the fish you have caught.")
 
     with filter_col:
 
         if st.button(
-            "🔎 Filter •" if filters_active else "🔎 Filter",
-            use_container_width=True,
+            "Filter •" if filters_active else "Filter",
+            icon=":material/filter_list:",
+            width="stretch",
         ):
             st.session_state.show_filter = not st.session_state.show_filter
             st.rerun()
@@ -349,8 +366,9 @@ def render_page():
     with add_col:
 
         if st.button(
-            "➕ Add Catch",
-            use_container_width=True,
+            "Add Catch",
+            icon=":material/add:",
+            width="stretch",
             type="primary",
         ):
             st.session_state.show_add_catch = True
@@ -363,13 +381,12 @@ def render_page():
 
     catches = catch_repository.get_catches(**st.session_state.filters)
 
-    st.divider()
-
     if not catches:
 
         st.info(
             "No catches found. Add your first catch with the "
-            "button above or adjust the filters."
+            "button above or adjust the filters.",
+            icon=":material/info:",
         )
 
         return
