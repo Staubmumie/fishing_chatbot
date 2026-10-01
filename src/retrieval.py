@@ -6,7 +6,6 @@ import os
 
 import lancedb
 from langchain_core.documents import Document
-from langchain_lancedb import LanceDB
 from langchain_openai import ChatOpenAI
 
 from .indexing import LANCE_DB_URI, PDFS, TABLE_NAME, get_embeddings
@@ -14,9 +13,8 @@ from .indexing import LANCE_DB_URI, PDFS, TABLE_NAME, get_embeddings
 
 KNOWN_BUNDESLAENDER = {pdf["bundesland"] for pdf in PDFS}
 
-# When the question names a Bundesland, chunks from other Bundesländer are
-# filtered out after the search. Fetch extra candidates so enough remain.
-CANDIDATES_PER_CHUNK_WITH_FILTER = 3
+# Table columns that become Document.metadata (see build_index()).
+METADATA_COLUMNS = ["bundesland", "document", "page", "page_end", "paragraph"]
 
 QUERY_REWRITE_PROMPT = """
 Rewrite the user's question as a clear German query for semantic retrieval
@@ -54,18 +52,23 @@ Return ONLY the search query.
 """.strip()
 
 
-def get_vector_store() -> LanceDB:
-    """Open the vector store created by indexing.py."""
-    if TABLE_NAME not in lancedb.connect(str(LANCE_DB_URI)).table_names():
+def get_table() -> lancedb.table.Table:
+    """Open the table created by indexing.py."""
+    db = lancedb.connect(str(LANCE_DB_URI))
+
+    if TABLE_NAME not in db.table_names():
         raise FileNotFoundError(
             f"No regulation index '{TABLE_NAME}' found in {LANCE_DB_URI}. "
             "Run `python -m src.indexing` once before starting the chatbot."
         )
 
-    return LanceDB(
-        uri=str(LANCE_DB_URI),
-        table_name=TABLE_NAME,
-        embedding_function=get_embeddings(),
+    return db.open_table(TABLE_NAME)
+
+
+def _row_to_document(row: dict) -> Document:
+    return Document(
+        page_content=row["text"],
+        metadata={column: row[column] for column in METADATA_COLUMNS},
     )
 
 
@@ -114,23 +117,28 @@ def retrieve_documents(
     print(f"Original query:  {question}")
     print(f"Retrieval query: {search_query}")
 
-    vector_store = get_vector_store()
-
-    # Check both queries, the Bundesland may appear in either one.
-    bundesland = _find_bundesland_in_query(f"{question} {search_query}")
-
-    if bundesland is None:
-        return vector_store.similarity_search(search_query, k=max_chunks)
-
-    candidates = vector_store.similarity_search(
-        search_query,
-        k=max_chunks * CANDIDATES_PER_CHUNK_WITH_FILTER,
+    bundesland = _find_bundesland_in_query(
+        f"{question} {search_query}"
     )
 
-    matching = [
-        document
-        for document in candidates
-        if document.metadata.get("bundesland") == bundesland
-    ]
+    query_vector = get_embeddings().embed_query(search_query)
 
-    return matching[:max_chunks]
+    search = (
+        get_table()
+        .search(
+            query_type="hybrid",
+            vector_column_name="vector",
+        )
+        .vector(query_vector)
+        .text(search_query)
+    )
+
+    if bundesland is not None:
+        search = search.where(
+            f"bundesland = '{bundesland}'",
+            prefilter=True,
+        )
+
+    rows = search.limit(max_chunks).to_list()
+
+    return [_row_to_document(row) for row in rows]

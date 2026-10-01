@@ -1,6 +1,6 @@
 import streamlit as st
 
-from src import catch_collection_ui, chatbot_ui
+from src.ui import catch_collection_ui, chatbot_ui, styles
 
 
 # ---------------------------------------------------------
@@ -8,28 +8,35 @@ from src import catch_collection_ui, chatbot_ui
 # ---------------------------------------------------------
 
 st.set_page_config(
-    page_title="Fishing Regulation Assistant",
+    page_title="Fishing Assistant",
     page_icon="🎣",
     layout="wide",
 )
+
+styles.apply_styles()
 
 
 # ---------------------------------------------------------
 # Navigation
 # ---------------------------------------------------------
 
-page = st.radio(
-    "Navigation",
-    ["🎣 Chatbot", "🐟 Catch Collection"],
-    horizontal=True,
-    label_visibility="collapsed",
+page = st.navigation(
+    [
+        st.Page(
+            chatbot_ui.render_page,
+            title="Chatbot",
+            icon=":material/forum:",
+            url_path="chatbot",
+            default=True,
+        ),
+        st.Page(
+            catch_collection_ui.render_page,
+            title="Catch Collection",
+            icon=":material/set_meal:",
+            url_path="catches",
+        ),
+    ],
+    position="top",
 )
 
-st.divider()
-
-
-if page == "🎣 Chatbot":
-    chatbot_ui.render_page()
-
-elif page == "🐟 Catch Collection":
-    catch_collection_ui.render_page()
+page.run()

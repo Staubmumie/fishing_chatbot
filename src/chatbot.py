@@ -21,23 +21,21 @@ from .tools import TOOL_LABELS, get_chat_tools
 
 
 SYSTEM_PROMPT = """
-You are a Fishing Regulation Assistant for Germany.
+You are a Fishing Assistant for recreational fishing in Germany.
 Today's date is {today}.
 
-Use the retrieved legal context below as the primary source for questions
-about fishing regulations. Do not invent regulations that are not supported
-by the retrieved context.
+Only answer fishing-related questions. If a request is unrelated, briefly say that you can only help with fishing topics.
 
-If the user asks about their own catches, use the available personal-catches
-tool when useful. Prefer summary results for counts, averages and general
-statistics. Request individual catch lists only when the user actually needs
-individual records, and keep such lists short.
+Use available tools when relevant.
 
-If the legal context is insufficient for a reliable regulation answer, say so.
+For fish species and general fishing knowledge, use `search_fishing_knowledge` before answering. This includes habitat, behavior, seasons, water conditions, diet, spawning, size, and fishing techniques. Use the results to verify your answer. Do not use this tool for regulations or personal catches.
+
+For fishing regulations, use the retrieved legal context as the primary source. Regulations may differ by Bundesland, so only apply rules to the state they come from. Do not invent or infer unsupported regulations. Cite the relevant § and Bundesland when using legal context. If the Bundesland is required but unclear, ask for it. If the context is insufficient, say so.
+
+Answer in the user's language. Be concise, clear, and practical.
 
 Retrieved legal context:
-{context}
-""".strip()
+{context}""".strip()
 
 
 @lru_cache(maxsize=8)
@@ -52,6 +50,17 @@ def get_model(model_name: str, temperature: float) -> ChatOpenAI:
     )
 
 
+def _format_pages(page: Any, page_end: Any) -> str | None:
+    """A paragraph can span a page break, e.g. "pages 3-4"."""
+    if page is None:
+        return None
+
+    if page_end is not None and page_end != page:
+        return f"pages {page}-{page_end}"
+
+    return f"page {page}"
+
+
 def _format_context(documents: list[Document]) -> str:
     if not documents:
         return "No relevant legal passages were retrieved."
@@ -61,13 +70,19 @@ def _format_context(documents: list[Document]) -> str:
     for index, document in enumerate(documents, start=1):
         bundesland = document.metadata.get("bundesland")
         document_name = document.metadata.get("document", "unknown document")
-        page = document.metadata.get("page")
+        paragraph = document.metadata.get("paragraph")
+        pages = _format_pages(
+            document.metadata.get("page"),
+            document.metadata.get("page_end"),
+        )
 
         label_parts = [str(document_name)]
         if bundesland:
             label_parts.append(str(bundesland))
-        if page is not None:
-            label_parts.append(f"page {page}")
+        if paragraph:
+            label_parts.append(f"§ {paragraph}")
+        if pages:
+            label_parts.append(pages)
 
         chunks.append(
             f"[Source {index}: {', '.join(label_parts)}]\n"
@@ -79,12 +94,14 @@ def _format_context(documents: list[Document]) -> str:
 
 def _extract_sources(documents: list[Document]) -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
-    seen: set[tuple[Any, Any]] = set()
+    seen: set[tuple[Any, Any, Any]] = set()
 
     for document in documents:
         document_name = document.metadata.get("document", "Unknown document")
+        paragraph = document.metadata.get("paragraph")
         page = document.metadata.get("page")
-        key = (document_name, page)
+        # Chunks are legal paragraphs now, so a page alone is not unique.
+        key = (document_name, paragraph, page)
 
         if key in seen:
             continue
@@ -93,7 +110,9 @@ def _extract_sources(documents: list[Document]) -> list[dict[str, Any]]:
         sources.append(
             {
                 "document": document_name,
+                "paragraph": paragraph,
                 "page": page,
+                "page_end": document.metadata.get("page_end"),
                 "bundesland": document.metadata.get("bundesland"),
             }
         )
@@ -110,7 +129,9 @@ def _extract_chunks(documents: list[Document]) -> list[dict[str, Any]]:
                 "index": index,
                 "content": document.page_content,
                 "document": document.metadata.get("document", "Unknown document"),
+                "paragraph": document.metadata.get("paragraph"),
                 "page": document.metadata.get("page"),
+                "page_end": document.metadata.get("page_end"),
                 "bundesland": document.metadata.get("bundesland"),
             }
         )

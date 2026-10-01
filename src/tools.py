@@ -113,8 +113,10 @@ def search_personal_catches(
 def search_fishing_knowledge(query: str) -> dict:
     """Search the internet for general fishing and fish knowledge.
 
-    Use this tool for questions about fish species and fishing knowledge,
-    for example:
+    Use this tool as the primary source for questions about fish species and general fishing knowledge. For these topics, retrieve relevant information with the tool before composing the final answer whenever applicable.
+
+    Topics include:
+
     - fish habitat and behavior
     - seasonal behavior
     - water temperature and depth

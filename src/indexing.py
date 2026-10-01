@@ -12,8 +12,8 @@ from pathlib import Path
 
 import lancedb
 import pymupdf
+from lancedb.index import FTS
 from langchain_core.documents import Document
-from langchain_lancedb import LanceDB
 from langchain_openai import OpenAIEmbeddings
 
 
@@ -36,6 +36,21 @@ PDFS = [
         "bundesland": "Rheinland-Pfalz",
         "document": "Landesverordnung_RheinlandPfalz",
     },
+    {
+        "path": RAW_DATA_DIR / "Landesverordnung_Bayern.pdf",
+        "bundesland": "Bayern",
+        "document": "Landesverordnung_Bayern",
+    },
+    {
+        "path": RAW_DATA_DIR / "Landesverordnung_Berlin.pdf",
+        "bundesland": "Berlin",
+        "document": "Landesverordnung_Berlin",
+    },
+    {
+        "path": RAW_DATA_DIR / "Landesverordnung_BadenWürttemberg.pdf",
+        "bundesland": "Baden-Württemberg",
+        "document": "Landesverordnung_BadenWürttemberg",
+    },
 ]
 
 # A line that starts a new legal paragraph, e.g. "§ 17" or "§ 3a".
@@ -48,7 +63,6 @@ def get_embeddings() -> OpenAIEmbeddings:
         model="openai/text-embedding-3-small",
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
-        check_embedding_ctx_length=False,
     )
 
 
@@ -82,7 +96,6 @@ def load_documents() -> list[Document]:
                             metadata={
                                 "bundesland": bundesland,
                                 "document": document_name,
-                                "source": str(pdf_path),
                                 "page": page_number + 1,
                             },
                         )
@@ -161,9 +174,7 @@ def split_legal_documents(documents: list[Document]) -> list[Document]:
             metadata = {
                 "bundesland": first_page.metadata.get("bundesland"),
                 "document": document_name,
-                "source": first_page.metadata.get("source"),
                 "page": page_start,
-                "page_start": page_start,
                 "page_end": page_end,
                 "paragraph": current_paragraph,
             }
@@ -207,7 +218,7 @@ def split_legal_documents(documents: list[Document]) -> list[Document]:
     return chunks
 
 
-def build_index() -> LanceDB:
+def build_index() -> lancedb.table.Table:
     """OCR the PDFs, split them by legal paragraph and rebuild LanceDB."""
     documents = load_documents()
 
@@ -217,24 +228,35 @@ def build_index() -> LanceDB:
 
     print(f"Created {len(chunks)} legal chunks")
 
-    embeddings = get_embeddings()
+    vectors = get_embeddings().embed_documents(
+        [chunk.page_content for chunk in chunks]
+    )
+
+    # One explicit column per field, so LanceDB can filter on them.
+    rows = [
+        {
+            "id": f"{chunk.metadata['document']}_{index}",
+            "vector": vector,
+            "text": chunk.page_content,
+            "bundesland": chunk.metadata["bundesland"],
+            "document": chunk.metadata["document"],
+            "page": chunk.metadata["page"],
+            "page_end": chunk.metadata["page_end"],
+            "paragraph": chunk.metadata["paragraph"],
+        }
+        for index, (chunk, vector) in enumerate(zip(chunks, vectors))
+    ]
 
     # Rebuilding should not append a second copy of every chunk.
     db = lancedb.connect(str(LANCE_DB_URI))
+    table = db.create_table(TABLE_NAME, data=rows, mode="overwrite")
 
-    if TABLE_NAME in db.table_names():
-        db.drop_table(TABLE_NAME)
-
-    vector_store = LanceDB.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        uri=str(LANCE_DB_URI),
-        table_name=TABLE_NAME,
-    )
+    # Full-text index on the chunk text for later keyword search.
+    table.create_index("text", config=FTS(language="German"), replace=True)
 
     print(f"Stored chunks in {LANCE_DB_URI} / {TABLE_NAME}")
 
-    return vector_store
+    return table
 
 
 if __name__ == "__main__":
